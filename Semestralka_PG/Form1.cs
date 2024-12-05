@@ -10,8 +10,8 @@ namespace Semestralka_PG
 {
     public partial class Form1 : Form
     {
-        private const int ImageWidth = 512;
-        private const int ImageHeight = 512;
+        const int IMAGE_WIDTH = 512;
+        const int IMAGE_HEIGHT = 512;
 
         public Form1()
         {
@@ -28,66 +28,106 @@ namespace Semestralka_PG
 
             if (openFileDialog.ShowDialog() == DialogResult.OK)
             {
-                byte[,] luminance = LoadYChannel(openFileDialog.FileName);
+                byte[] fileBytes = File.ReadAllBytes(openFileDialog.FileName);
+                byte[,] lum_bytes = new byte[IMAGE_HEIGHT, IMAGE_WIDTH];
 
-                // Apply a Gaussian filter
-                double[,] blurred = ApplyGaussianFilter(luminance);
-
-                // Adaptive threshold using Otsu
-                byte[,] binaryImage = ApplyThreshold(luminance, OtsuThreshold(luminance));
-
-                // Edge detection using Sobel operator
-                byte[,] edges = SobelEdgeDetection(luminance);
-
-                // Curve fitting
-                List<PointF> centerLine = FindCenterLine(binaryImage);
-                List<PointF> fittedCurve = FitCurveWithMathNet(centerLine);
-
-                // Render the processed image
-                pictureBox1.Image = RenderImage(blurred, binaryImage, edges, fittedCurve);
-            }
-        }
-
-        private List<PointF> FindCenterLine(byte[,] binaryImage)
-        {
-            var centerLine = new List<PointF>();
-
-            for (int y = 0; y < ImageHeight; y++)
-            {
-                int sumX = 0, count = 0;
-                for (int x = 0; x < ImageWidth; x++)
+                for (int y = 0; y < IMAGE_HEIGHT; y++)
                 {
-                    if (binaryImage[y, x] == 0)
+                    for (int x = 0; x < IMAGE_WIDTH; x++)
                     {
-                        sumX += x;
-                        count++;
+                        lum_bytes[y, x] = fileBytes[y * IMAGE_WIDTH + x];
                     }
                 }
 
-                if (count > 0)
-                {
-                    centerLine.Add(new PointF(sumX / (float)count, y));
-                }
-            }
 
-            return centerLine;
+
+                Bitmap filteredImage = RenderImage(lum_bytes);
+
+                pictureBox1.Image = filteredImage;
+
+                // Definujte body pre homografiu
+                PointF[] srcPoints = {
+            new PointF(0, 0),             // Horný ľavý roh
+            new PointF(IMAGE_WIDTH - 1, 0), // Horný pravý roh
+            new PointF(0, IMAGE_HEIGHT - 1),// Dolný ľavý roh
+            new PointF(IMAGE_WIDTH - 1, IMAGE_HEIGHT - 1) // Dolný pravý roh
+        };
+
+                PointF[] destPoints = {
+            new PointF(100, 100), // Horný ľavý roh
+            new PointF(400, 100), // Horný pravý roh
+            new PointF(100, 500), // Dolný ľavý roh
+            new PointF(400, 500)  // Dolný pravý roh
+        };
+
+                float[,] homographyMatrix = ComputeHomographyMatrix(srcPoints, destPoints);
+
+                Bitmap transformedImage = ApplyHomographyToImage((Bitmap)pictureBox1.Image, homographyMatrix);
+
+                pictureBox2.Image = transformedImage;
+            }
         }
 
-        private byte[,] LoadYChannel(string filePath)
+        private float[,] ComputeHomographyMatrix(PointF[] srcPoints, PointF[] destPoints)
         {
-            byte[] fileBytes = File.ReadAllBytes(filePath);
-            byte[,] luminance = new byte[ImageHeight, ImageWidth];
+            if (srcPoints.Length != 4 || destPoints.Length != 4)
+                throw new ArgumentException("Need exactly 4 source and destination points.");
 
-            for (int y = 0; y < ImageHeight; y++)
+            var A = new List<double[]>();
+            var b = new List<double>();
+
+            for (int i = 0; i < 4; i++)
             {
-                for (int x = 0; x < ImageWidth; x++)
+                float x = srcPoints[i].X, y = srcPoints[i].Y;
+                float xPrime = destPoints[i].X, yPrime = destPoints[i].Y;
+
+                A.Add(new double[] { x, y, 1, 0, 0, 0, -xPrime * x, -xPrime * y });
+                A.Add(new double[] { 0, 0, 0, x, y, 1, -yPrime * x, -yPrime * y });
+                b.Add(xPrime);
+                b.Add(yPrime);
+            }
+
+            var matrix = MathNet.Numerics.LinearAlgebra.Matrix<double>.Build.DenseOfRows(A);
+            var vector = MathNet.Numerics.LinearAlgebra.Vector<double>.Build.DenseOfEnumerable(b);
+            var solution = matrix.Solve(vector);
+
+            return new float[3, 3]
+            {
+        { (float)solution[0], (float)solution[1], (float)solution[2] },
+        { (float)solution[3], (float)solution[4], (float)solution[5] },
+        { (float)solution[6], (float)solution[7], 1 }
+            };
+        }
+
+        private Bitmap ApplyHomographyToImage(Bitmap source, float[,] homographyMatrix)
+        {
+            Bitmap transformed = new Bitmap(IMAGE_WIDTH, IMAGE_HEIGHT);
+
+            for (int y = 0; y < IMAGE_HEIGHT; y++)
+            {
+                for (int x = 0; x < IMAGE_WIDTH; x++)
                 {
-                    luminance[y, x] = fileBytes[y * ImageWidth + x];
+                    float newX = homographyMatrix[0, 0] * x + homographyMatrix[0, 1] * y + homographyMatrix[0, 2];
+                    float newY = homographyMatrix[1, 0] * x + homographyMatrix[1, 1] * y + homographyMatrix[1, 2];
+                    float w = homographyMatrix[2, 0] * x + homographyMatrix[2, 1] * y + homographyMatrix[2, 2];
+
+                    newX /= w;
+                    newY /= w;
+
+                    if (newX >= 0 && newX < IMAGE_WIDTH && newY >= 0 && newY < IMAGE_HEIGHT)
+                    {
+                        Color color = source.GetPixel(x, y);
+                        transformed.SetPixel((int)newX, (int)newY, color);
+                    }
                 }
             }
 
-            return luminance;
+            return transformed;
         }
+
+
+
+
 
         private double[,] ApplyGaussianFilter(byte[,] image)
         {
@@ -99,15 +139,20 @@ namespace Semestralka_PG
                 { 1, 4, 6, 4, 1 }
             };
 
-            double kernelSum = kernel.Cast<double>().Sum();
+            double kernelSum = 0;
+            foreach (double value in kernel)
+            {
+                kernelSum += value;
+            }
             int kSize = kernel.GetLength(0);
+
             int offset = kSize / 2;
 
-            double[,] result = new double[ImageHeight, ImageWidth];
+            double[,] result = new double[IMAGE_HEIGHT, IMAGE_WIDTH];
 
-            for (int y = offset; y < ImageHeight - offset; y++)
+            for (int y = offset; y < IMAGE_HEIGHT - offset; y++)
             {
-                for (int x = offset; x < ImageWidth - offset; x++)
+                for (int x = offset; x < IMAGE_WIDTH - offset; x++)
                 {
                     double sum = 0;
 
@@ -126,23 +171,19 @@ namespace Semestralka_PG
             return result;
         }
 
-        private int[] GenerateHistogram(byte[,] image)
+
+        private byte[,] ApplyThreshold(byte[,] image)
         {
             int[] histogram = new int[256];
-            for (int y = 0; y < ImageHeight; y++)
+            for (int y = 0; y < IMAGE_HEIGHT; y++)
             {
-                for (int x = 0; x < ImageWidth; x++)
+                for (int x = 0; x < IMAGE_WIDTH; x++)
                 {
                     histogram[image[y, x]]++;
                 }
             }
-            return histogram;
-        }
 
-        private int OtsuThreshold(byte[,] image)
-        {
-            int[] histogram = GenerateHistogram(image);
-            int totalPixels = ImageWidth * ImageHeight;
+            int totalPixels = IMAGE_WIDTH * IMAGE_HEIGHT;
 
             int sumB = 0, wB = 0, max = 0;
             int sum1 = histogram.Select((t, i) => t * i).Sum();
@@ -168,15 +209,10 @@ namespace Semestralka_PG
                 }
             }
 
-            return threshold;
-        }
-
-        private byte[,] ApplyThreshold(byte[,] image, int threshold)
-        {
-            byte[,] binaryImage = new byte[ImageHeight, ImageWidth];
-            for (int y = 0; y < ImageHeight; y++)
+            byte[,] binaryImage = new byte[IMAGE_HEIGHT, IMAGE_WIDTH];
+            for (int y = 0; y < IMAGE_HEIGHT; y++)
             {
-                for (int x = 0; x < ImageWidth; x++)
+                for (int x = 0; x < IMAGE_WIDTH; x++)
                 {
                     binaryImage[y, x] = (byte)(image[y, x] >= threshold ? 255 : 0);
                 }
@@ -198,11 +234,11 @@ namespace Semestralka_PG
                 { -1, -2, -1 }
             };
 
-            byte[,] edges = new byte[ImageHeight, ImageWidth];
+            byte[,] edges = new byte[IMAGE_HEIGHT, IMAGE_WIDTH];
 
-            for (int y = 1; y < ImageHeight - 1; y++)
+            for (int y = 1; y < IMAGE_HEIGHT - 1; y++)
             {
-                for (int x = 1; x < ImageWidth - 1; x++)
+                for (int x = 1; x < IMAGE_WIDTH - 1; x++)
                 {
                     int sumX = 0, sumY = 0;
 
@@ -221,6 +257,31 @@ namespace Semestralka_PG
             }
 
             return edges;
+        }
+
+        private List<PointF> FindCenterLine(byte[,] binaryImage)
+        {
+            var centerLine = new List<PointF>();
+
+            for (int y = 0; y < IMAGE_HEIGHT; y++)
+            {
+                int sumX = 0, count = 0;
+                for (int x = 0; x < IMAGE_WIDTH; x++)
+                {
+                    if (binaryImage[y, x] == 0)
+                    {
+                        sumX += x;
+                        count++;
+                    }
+                }
+
+                if (count > 0)
+                {
+                    centerLine.Add(new PointF(sumX / (float)count, y));
+                }
+            }
+
+            return centerLine;
         }
 
         private List<PointF> FitCurveWithMathNet(List<PointF> points)
@@ -242,39 +303,37 @@ namespace Semestralka_PG
             return fittedPoints;
         }
 
-        private Bitmap RenderImage(double[,] blurred, byte[,] binaryImage, byte[,] edges, List<PointF> curve)
-        {
-            Bitmap bmp = new Bitmap(ImageWidth, ImageHeight);
 
-            // Draw blurred background
-            for (int y = 0; y < ImageHeight; y++)
+        private Bitmap RenderImage(byte[,] luminance)
+        {
+            double[,] blurred = ApplyGaussianFilter(luminance);
+            byte[,] binaryImage = ApplyThreshold(luminance);
+            byte[,] edges = SobelEdgeDetection(luminance);
+
+            List<PointF> centerLine = FindCenterLine(binaryImage);
+            List<PointF> curve = FitCurveWithMathNet(centerLine);
+
+            Bitmap bmp = new Bitmap(IMAGE_WIDTH, IMAGE_HEIGHT);
+
+            for (int y = 0; y < IMAGE_HEIGHT; y++)
             {
-                for (int x = 0; x < ImageWidth; x++)
+                for (int x = 0; x < IMAGE_WIDTH; x++)
                 {
                     int value = (int)blurred[y, x];
                     bmp.SetPixel(x, y, Color.FromArgb(value, value, value));
                 }
             }
 
-            // Draw endges
             using (Graphics g = Graphics.FromImage(bmp))
             {
-                for (int y = 0; y < ImageHeight; y++)
+                for (int y = 0; y < IMAGE_HEIGHT; y++)
                 {
-                    for (int x = 0; x < ImageWidth; x++)
+                    for (int x = 0; x < IMAGE_WIDTH; x++)
                     {
                         if (edges[y, x] > 0)
                         {
                             bmp.SetPixel(x, y, Color.Gray);
                         }
-                    }
-                }
-
-                // Draw binary image
-                for (int y = 0; y < ImageHeight; y++)
-                {
-                    for (int x = 0; x < ImageWidth; x++)
-                    {
                         if (binaryImage[y, x] == 0)
                         {
                             bmp.SetPixel(x, y, Color.Black);
@@ -282,7 +341,6 @@ namespace Semestralka_PG
                     }
                 }
 
-                // Draw fitted curve
                 if (curve != null && curve.Count > 1)
                 {
                     for (int i = 0; i < curve.Count - 1; i++)
@@ -294,5 +352,8 @@ namespace Semestralka_PG
 
             return bmp;
         }
+
+
+
     }
 }

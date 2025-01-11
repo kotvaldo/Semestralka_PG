@@ -41,9 +41,8 @@ namespace Semestralka_PG
 
                 byte[,] edges = SobelEdgeDetectionParallel(luminance);
 
-                List<PointF> centerLine = FindCenterLine(binaryImage);
 
-                pictureBox1.Image = RenderImageFast(blurred, binaryImage, edges, centerLine);
+                pictureBox1.Image = RenderImageFast(blurred, edges, centerLine);
 
                 stopwatch.Stop(); // Zastavíme časovač
                 MessageBox.Show($"Processing completed in {stopwatch.ElapsedMilliseconds} ms", "Processing Time");
@@ -309,7 +308,7 @@ namespace Semestralka_PG
             }
         }
 
-        private Bitmap RenderImageFast(double[,] blurred, byte[,] binaryImage, byte[,] edges, List<PointF> curve)
+        private Bitmap RenderImageFast(double[,] blurred, byte[,] binaryImage, byte[,] edges)
         {
             Bitmap bmp = new Bitmap(ImageWidth, ImageHeight);
             Rectangle rect = new Rectangle(0, 0, ImageWidth, ImageHeight);
@@ -336,17 +335,23 @@ namespace Semestralka_PG
             System.Runtime.InteropServices.Marshal.Copy(rgbValues, 0, ptr, bytes);
             bmp.UnlockBits(bmpData);
 
+            List<PointF> linePoints = FindCenterLine(binaryImage);
+
             using (Graphics g = Graphics.FromImage(bmp))
             {
-                if (curve != null && curve.Count >= 4)
+                if (linePoints != null && linePoints.Count >= 3)
                 {
-                    DrawBezierCurve(g, curve);
+                    DrawBezierCurve(g, linePoints);
+                } else
+                {
+
                 }
             }
 
             return bmp;
         }
 
+        
 
     }
 }

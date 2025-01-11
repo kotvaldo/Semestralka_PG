@@ -7,6 +7,7 @@ using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using System.Windows.Forms;
+using MathNet.Numerics.LinearAlgebra;
 
 namespace Semestralka_PG
 {
@@ -30,7 +31,7 @@ namespace Semestralka_PG
 
             if (openFileDialog.ShowDialog() == DialogResult.OK)
             {
-                Stopwatch stopwatch = new Stopwatch(); // Časovač na meranie času
+                Stopwatch stopwatch = new Stopwatch(); 
                 stopwatch.Start();
 
                 byte[,] luminance = LoadYChannel(openFileDialog.FileName);
@@ -38,13 +39,14 @@ namespace Semestralka_PG
                 double[,] blurred = ApplyGaussianFilterDCTVParallel(luminance);
 
                 byte[,] binaryImage = ApplyThresholdParallel(luminance, OtsuThreshold(luminance));
+                
+                List<PointF> centerLine = FindCenterLine(binaryImage);
 
-                byte[,] edges = SobelEdgeDetectionParallel(luminance);
+                var bezierPoints = FitBezierCurve(centerLine);
 
+                pictureBox1.Image = RenderImageFast(blurred,binaryImage, bezierPoints);
 
-                pictureBox1.Image = RenderImageFast(blurred, edges, centerLine);
-
-                stopwatch.Stop(); // Zastavíme časovač
+                stopwatch.Stop(); 
                 MessageBox.Show($"Processing completed in {stopwatch.ElapsedMilliseconds} ms", "Processing Time");
             }
         }
@@ -75,7 +77,6 @@ namespace Semestralka_PG
 
             double[,] result = new double[ImageHeight, ImageWidth];
 
-            // Paralelná aplikácia filtra na riadky
             Parallel.For(0, ImageHeight, y =>
             {
                 double[] row = new double[ImageWidth];
@@ -91,7 +92,6 @@ namespace Semestralka_PG
                 }
             });
 
-            // Paralelná aplikácia filtra na stĺpce
             Parallel.For(0, ImageWidth, x =>
             {
                 double[] column = new double[ImageHeight];
@@ -127,7 +127,7 @@ namespace Semestralka_PG
             return kernel;
         }
 
-        // Aplikácia DCT-V
+       
         
         private double[] ApplyDCTV(double[] data, double[] kernel)
         {
@@ -136,7 +136,7 @@ namespace Semestralka_PG
             double[] result = new double[N];
             double[] dctKernel = new double[K];
 
-            // Vypočítanie DCT koeficientov jadra
+           
             for (int k = 0; k < K; k++)
             {
                 double sum = 0.0;
@@ -147,7 +147,6 @@ namespace Semestralka_PG
                 dctKernel[k] = sum;
             }
 
-            // Aplikácia DCT-V na dáta
             for (int i = 0; i < N; i++)
             {
                 double sum = 0.0;
@@ -229,44 +228,7 @@ namespace Semestralka_PG
             return binaryImage;
         }
 
-        private byte[,] SobelEdgeDetectionParallel(byte[,] image)
-        {
-            int[,] gx = {
-                { -1, 0, 1 },
-                { -2, 0, 2 },
-                { -1, 0, 1 }
-            };
-
-            int[,] gy = {
-                { 1, 2, 1 },
-                { 0, 0, 0 },
-                { -1, -2, -1 }
-            };
-
-            byte[,] edges = new byte[ImageHeight, ImageWidth];
-
-            Parallel.For(1, ImageHeight - 1, y =>
-            {
-                for (int x = 1; x < ImageWidth - 1; x++)
-                {
-                    int sumX = 0, sumY = 0;
-
-                    for (int ky = -1; ky <= 1; ky++)
-                    {
-                        for (int kx = -1; kx <= 1; kx++)
-                        {
-                            sumX += gx[ky + 1, kx + 1] * image[y + ky, x + kx];
-                            sumY += gy[ky + 1, kx + 1] * image[y + ky, x + kx];
-                        }
-                    }
-
-                    int magnitude = (int)Math.Sqrt(sumX * sumX + sumY * sumY);
-                    edges[y, x] = (byte)Math.Min(255, magnitude);
-                }
-            });
-
-            return edges;
-        }
+        
 
         private List<PointF> FindCenterLine(byte[,] binaryImage)
         {
@@ -293,22 +255,82 @@ namespace Semestralka_PG
             return centerLine;
         }
 
-        private void DrawBezierCurve(Graphics g, List<PointF> points)
+       
+        private List<PointF> FitBezierCurve(List<PointF> points)
         {
-            if (points.Count >= 4)
+            int n = points.Count;
+
+            if (n < 4)
             {
-                for (int i = 0; i < points.Count - 3; i += 3)
-                {
-                    g.DrawBezier(Pens.Red, points[i], points[i + 1], points[i + 2], points[i + 3]);
-                }
+                throw new ArgumentException("At least 4 points are required to fit a cubic Bezier curve.");
             }
-            else if (points.Count == 2)
-            {
-                g.DrawLine(Pens.Red, points[0], points[1]);
-            }
+
+            var vectorPoints = points.Select(p => Vector<double>.Build.DenseOfArray(new double[] { p.X, p.Y })).ToArray();
+            var fittedPoints = FitCubicBezier(vectorPoints);
+
+            return fittedPoints.Select(v => new PointF((float)v[0], (float)v[1])).ToList();
         }
 
-        private Bitmap RenderImageFast(double[,] blurred, byte[,] binaryImage, byte[,] edges)
+        private Vector<double>[] FitCubicBezier(Vector<double>[] points)
+        {
+            int n = points.Length;
+
+            if (n < 4)
+            {
+                throw new ArgumentException("At least 4 points are required to fit a cubic Bezier curve.");
+            }
+
+            Vector<double> P0 = points[0];
+            Vector<double> P3 = points[n - 1];
+
+            // Parameter t values for each point (chord length parameterization)
+            double[] t = new double[n];
+
+            t[0] = 0;
+
+            for (int i = 1; i < n; i++)
+            {
+                t[i] = t[i - 1] + (points[i] - points[i - 1]).L2Norm();
+            }
+            for (int i = 1; i < n; i++)
+            {
+                t[i] /= t[n - 1];
+            }
+
+            // Create matrix A and vector B for least squares solution
+            var A = Matrix<double>.Build.Dense(n, 2);
+            var Bx = Vector<double>.Build.Dense(n);
+            var By = Vector<double>.Build.Dense(n);
+
+            for (int i = 0; i < n; i++)
+            {
+                double u = 1 - t[i];
+                double tt = t[i] * t[i];
+                double uu = u * u;
+                double ttt = tt * t[i];
+                double uuu = uu * u;
+
+                // Note: we are solving for P1 and P2, so we use the fixed P0 and P3
+                A[i, 0] = 3 * uu * t[i]; // Coefficient for P1
+                A[i, 1] = 3 * u * tt;    // Coefficient for P2
+
+                Bx[i] = points[i][0] - (uuu * P0[0] + ttt * P3[0]);
+                By[i] = points[i][1] - (uuu * P0[1] + ttt * P3[1]);
+            }
+
+            // Solve the least squares problem
+            var P1P2X = A.Solve(Bx);
+            var P1P2Y = A.Solve(By);
+
+            return new[]
+            {
+                P0,
+                Vector<double>.Build.DenseOfArray(new[] { P1P2X[0], P1P2Y[0] }),
+                Vector<double>.Build.DenseOfArray(new[] { P1P2X[1], P1P2Y[1] }),
+                P3,
+            };
+        }
+        private Bitmap RenderImageFast(double[,] blurred, byte[,] binaryImage, List<PointF> curvePoints)
         {
             Bitmap bmp = new Bitmap(ImageWidth, ImageHeight);
             Rectangle rect = new Rectangle(0, 0, ImageWidth, ImageHeight);
@@ -339,12 +361,17 @@ namespace Semestralka_PG
 
             using (Graphics g = Graphics.FromImage(bmp))
             {
-                if (linePoints != null && linePoints.Count >= 3)
+              
+                if (curvePoints.Count >= 4)
                 {
-                    DrawBezierCurve(g, linePoints);
-                } else
+                    for (int i = 0; i < curvePoints.Count - 3; i += 3)
+                    {
+                        g.DrawBezier(Pens.Red, curvePoints[i], curvePoints[i + 1], curvePoints[i + 2], curvePoints[i + 3]);
+                    }
+                }
+                else if (curvePoints.Count == 2)
                 {
-
+                    g.DrawLine(Pens.Red, curvePoints[0], curvePoints[1]);
                 }
             }
 

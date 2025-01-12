@@ -15,11 +15,13 @@ namespace Semestralka_PG
     {
         private const int ImageWidth = 512;
         private const int ImageHeight = 512;
+        private Profiler _profiler = new Profiler();
 
         public Form1()
         {
             InitializeComponent();
         }
+
 
         private void BtnLoadImageClick(object sender, EventArgs e)
         {
@@ -30,9 +32,9 @@ namespace Semestralka_PG
             };
 
             if (openFileDialog.ShowDialog() == DialogResult.OK)
-            {
-                Stopwatch stopwatch = new Stopwatch(); 
-                stopwatch.Start();
+            {   
+                _profiler.ClearData();
+                _profiler.StartNewSequence();
 
                 byte[,] luminance = LoadYChannel(openFileDialog.FileName);
 
@@ -46,11 +48,61 @@ namespace Semestralka_PG
 
                 pictureBox1.Image = RenderImageFast(blurred,binaryImage, bezierPoints);
 
-                stopwatch.Stop(); 
-                MessageBox.Show($"Processing completed in {stopwatch.ElapsedMilliseconds} ms", "Processing Time");
+                _profiler.StopNewSequence();
+                MessageBox.Show($"Processing completed in {_profiler.Data.First()} ms", "Processing Time");
             }
         }
 
+        private void BtnLoadImageWithCyclic(object sender, EventArgs e)
+        {
+            OpenFileDialog openFileDialog = new OpenFileDialog
+            {
+                Filter = "Text Files (*.txt)|*.txt",
+                Title = "Select Text Image File"
+            };
+            
+            if (openFileDialog.ShowDialog() == DialogResult.OK)
+            {
+                _profiler.ClearData();
+                int count = 0;
+                if (textBox1.Text == "" )
+                {
+                    count = 20;
+                }
+                else
+                {
+                    try
+                    {
+                        count = int.Parse(textBox1.Text);
+                    }catch {
+                        MessageBox.Show("Not correct number. Set Default to 20", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                        count = 20;
+                    }
+                    
+                }
+                for (int i = 0; i <= 20; i++)
+                {
+                    _profiler.StartNewSequence();
+
+                    byte[,] luminance = LoadYChannel(openFileDialog.FileName);
+
+                    double[,] blurred = ApplyGaussianFilterDCTVParallel(luminance);
+
+                    byte[,] binaryImage = ApplyThresholdParallel(luminance, OtsuThreshold(luminance));
+
+                    List<PointF> centerLine = FindCenterLine(binaryImage);
+
+                    var bezierPoints = FitBezierCurve(centerLine);
+
+                    pictureBox1.Image = RenderImageFast(blurred, binaryImage, bezierPoints);
+
+                    _profiler.StopNewSequence();
+
+                }
+                _profiler.CreateFileWithChart();
+                _profiler.ClearData();
+            }
+        }
         private byte[,] LoadYChannel(string filePath)
         {
             byte[] fileBytes = File.ReadAllBytes(filePath);
@@ -375,6 +427,5 @@ namespace Semestralka_PG
         }
 
         
-
     }
 }

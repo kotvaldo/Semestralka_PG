@@ -52,6 +52,7 @@ namespace Semestralka_PG
                 pictureBox1.Image = RenderImageFast(blurred,binaryImage, bezierPoints, edges);
 
                 _profiler.StopNewSequence();
+                _profiler.ClearData();
                 MessageBox.Show($"Processing completed in {_profiler.Data.First()} ms", "Processing Time");
             }
         }

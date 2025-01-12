@@ -11,6 +11,7 @@ namespace Semestralka_PG
     using System.ComponentModel;
     using System.Diagnostics;
     using System.IO;
+    using System.Windows.Forms;
     using OfficeOpenXml;
     using OfficeOpenXml.Drawing.Chart;
 
@@ -45,7 +46,9 @@ namespace Semestralka_PG
             {
                 throw new InvalidOperationException("Nie sú žiadne dáta na uloženie.");
             }
+            int avg = (int)Data.Average(i => (double)i);
 
+            MessageBox.Show($"Average time of algorithm for {Data.Count} images : {avg} ms ");
             string projectDirectory = AppDomain.CurrentDomain.BaseDirectory;
             string dataFolder = Path.Combine(projectDirectory, "Data");
 
@@ -81,7 +84,6 @@ namespace Semestralka_PG
                 package.SaveAs(new FileInfo(filePath));
             }
 
-            Console.WriteLine($"File was created: {filePath}");
         }
     }
 

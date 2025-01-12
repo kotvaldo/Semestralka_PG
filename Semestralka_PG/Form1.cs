@@ -41,12 +41,15 @@ namespace Semestralka_PG
                 double[,] blurred = ApplyGaussianFilterDCTVParallel(luminance);
 
                 byte[,] binaryImage = ApplyThresholdParallel(luminance, OtsuThreshold(luminance));
-                
+
+                byte[,] edges = SobelEdgeDetectionParallel(luminance);
+
                 List<PointF> centerLine = FindCenterLine(binaryImage);
 
-                var bezierPoints = FitBezierCurve(centerLine);
+                var bezierPoints = ComputeBezierCurve(centerLine,0.2);
 
-                pictureBox1.Image = RenderImageFast(blurred,binaryImage, bezierPoints);
+
+                pictureBox1.Image = RenderImageFast(blurred,binaryImage, bezierPoints, edges);
 
                 _profiler.StopNewSequence();
                 MessageBox.Show($"Processing completed in {_profiler.Data.First()} ms", "Processing Time");
@@ -80,7 +83,7 @@ namespace Semestralka_PG
                     }
                     
                 }
-                for (int i = 0; i <= 20; i++)
+                for (int i = 0; i <= count; i++)
                 {
                     _profiler.StartNewSequence();
 
@@ -88,13 +91,16 @@ namespace Semestralka_PG
 
                     double[,] blurred = ApplyGaussianFilterDCTVParallel(luminance);
 
+                    byte[,] edges = SobelEdgeDetectionParallel(luminance);
+
                     byte[,] binaryImage = ApplyThresholdParallel(luminance, OtsuThreshold(luminance));
 
                     List<PointF> centerLine = FindCenterLine(binaryImage);
 
-                    var bezierPoints = FitBezierCurve(centerLine);
+                    var bezierPoints = ComputeBezierCurve(centerLine, 0.2);
 
-                    pictureBox1.Image = RenderImageFast(blurred, binaryImage, bezierPoints);
+
+                    pictureBox1.Image = RenderImageFast(blurred, binaryImage, bezierPoints,edges);
 
                     _profiler.StopNewSequence();
 
@@ -232,6 +238,44 @@ namespace Semestralka_PG
             return histogram;
         }
 
+        private byte[,] SobelEdgeDetectionParallel(byte[,] image)
+        {
+            int[,] gx = {
+                { -1, 0, 1 },
+                { -2, 0, 2 },
+                { -1, 0, 1 }
+            };
+
+            int[,] gy = {
+                { 1, 2, 1 },
+                { 0, 0, 0 },
+                { -1, -2, -1 }
+            };
+
+            byte[,] edges = new byte[ImageHeight, ImageWidth];
+
+            Parallel.For(1, ImageHeight - 1, y =>
+            {
+                for (int x = 1; x < ImageWidth - 1; x++)
+                {
+                    int sumX = 0, sumY = 0;
+
+                    for (int ky = -1; ky <= 1; ky++)
+                    {
+                        for (int kx = -1; kx <= 1; kx++)
+                        {
+                            sumX += gx[ky + 1, kx + 1] * image[y + ky, x + kx];
+                            sumY += gy[ky + 1, kx + 1] * image[y + ky, x + kx];
+                        }
+                    }
+
+                    int magnitude = (int)Math.Sqrt(sumX * sumX + sumY * sumY);
+                    edges[y, x] = (byte)Math.Min(255, magnitude);
+                }
+            });
+
+            return edges;
+        }
         private int OtsuThreshold(byte[,] image)
         {
             int[] histogram = GenerateHistogram(image);
@@ -306,81 +350,44 @@ namespace Semestralka_PG
             return centerLine;
         }
 
-       
-        private List<PointF> FitBezierCurve(List<PointF> points)
+
+        private List<PointF> ComputeBezierCurve(List<PointF> controlPoints, double inTimeInterval)
         {
+            if (inTimeInterval <= 0.0 || inTimeInterval > 1.0)
+                throw new ArgumentException("Time interval must be in the range (0.0, 1.0].");
 
-            if (points.Count < 4)
+            if (controlPoints == null || controlPoints.Count < 2)
+                throw new ArgumentException("At least two control points are required.");
+
+            List<PointF> curvePoints = new List<PointF>();
+            for (double t = 0.0; t <= 1.0; t += inTimeInterval)
             {
-                throw new ArgumentException("At least 4 points are required to fit a cubic Bezier curve.");
+                curvePoints.Add(ComputeBezierPoint(controlPoints, (float)t));
             }
-
-            var vectorPoints = points.Select(p => Vector<double>.Build.DenseOfArray(new double[] { p.X, p.Y })).ToArray();
-            var fittedPoints = FitCubicBezier(vectorPoints);
-
-            return fittedPoints.Select(v => new PointF((float)v[0], (float)v[1])).ToList();
+            return curvePoints;
         }
 
-        private Vector<double>[] FitCubicBezier(Vector<double>[] points)
+        private PointF ComputeBezierPoint(List<PointF> controlPoints, float t)
         {
-            int n = points.Length;
+            if (controlPoints.Count == 1)
+                return controlPoints[0];
 
-            if (n < 4)
+            List<PointF> nextLevelPoints = new List<PointF>();
+            for (int i = 0; i < controlPoints.Count - 1; i++)
             {
-                throw new ArgumentException("At least 4 points are required to fit a cubic Bezier curve.");
+                float x = (1 - t) * controlPoints[i].X + t * controlPoints[i + 1].X;
+                float y = (1 - t) * controlPoints[i].Y + t * controlPoints[i + 1].Y;
+                nextLevelPoints.Add(new PointF(x, y));
             }
 
-            Vector<double> P0 = points[0];
-            Vector<double> P3 = points[n - 1];
-
-            // Parameter t values for each point (chord length parameterization)
-            double[] t = new double[n];
-
-            t[0] = 0;
-
-            for (int i = 1; i < n; i++)
-            {
-                t[i] = t[i - 1] + (points[i] - points[i - 1]).L2Norm();
-            }
-            for (int i = 1; i < n; i++)
-            {
-                t[i] /= t[n - 1];
-            }
-
-            // Create matrix A and vector B for least squares solution
-            var A = Matrix<double>.Build.Dense(n, 2);
-            var Bx = Vector<double>.Build.Dense(n);
-            var By = Vector<double>.Build.Dense(n);
-
-            for (int i = 0; i < n; i++)
-            {
-                double u = 1 - t[i];
-                double tt = t[i] * t[i];
-                double uu = u * u;
-                double ttt = tt * t[i];
-                double uuu = uu * u;
-
-                A[i, 0] = 3 * uu * t[i]; 
-                A[i, 1] = 3 * u * tt;   
-
-                Bx[i] = points[i][0] - (uuu * P0[0] + ttt * P3[0]);
-                By[i] = points[i][1] - (uuu * P0[1] + ttt * P3[1]);
-            }
-
-            var P1P2X = A.Solve(Bx);
-            var P1P2Y = A.Solve(By);
-
-            return new[]
-            {
-                P0,
-                Vector<double>.Build.DenseOfArray(new[] { P1P2X[0], P1P2Y[0] }),
-                Vector<double>.Build.DenseOfArray(new[] { P1P2X[1], P1P2Y[1] }),
-                P3,
-            };
+            return ComputeBezierPoint(nextLevelPoints, t);
         }
-        private Bitmap RenderImageFast(double[,] blurred, byte[,] binaryImage, List<PointF> curvePoints)
+
+
+        private Bitmap RenderImageFast(double[,] blurred, byte[,] binaryImage, List<PointF> curvePoints, byte[,] edges)
         {
             Bitmap bmp = new Bitmap(ImageWidth, ImageHeight);
+
             Rectangle rect = new Rectangle(0, 0, ImageWidth, ImageHeight);
             BitmapData bmpData = bmp.LockBits(rect, ImageLockMode.WriteOnly, PixelFormat.Format24bppRgb);
 
@@ -389,6 +396,7 @@ namespace Semestralka_PG
             int bytes = stride * ImageHeight;
             byte[] rgbValues = new byte[bytes];
 
+            // Render blurred image as background
             Parallel.For(0, ImageHeight, y =>
             {
                 for (int x = 0; x < ImageWidth; x++)
@@ -399,33 +407,53 @@ namespace Semestralka_PG
                     rgbValues[index] = (byte)value; // B
                     rgbValues[index + 1] = (byte)value; // G
                     rgbValues[index + 2] = (byte)value; // R
+
+                    // Add edge highlighting
+                    if (edges[y, x] > 50) // Adjust threshold as needed
+                    {
+                        rgbValues[index] = 255; // B
+                        rgbValues[index + 1] = 255; // G
+                        rgbValues[index + 2] = 255; // R
+                    }
                 }
             });
 
             System.Runtime.InteropServices.Marshal.Copy(rgbValues, 0, ptr, bytes);
             bmp.UnlockBits(bmpData);
 
-            List<PointF> linePoints = FindCenterLine(binaryImage);
-
             using (Graphics g = Graphics.FromImage(bmp))
             {
-              
-                if (curvePoints.Count >= 4)
+                // Draw edges in silver
+                for (int y = 0; y < ImageHeight; y++)
                 {
-                    for (int i = 0; i < curvePoints.Count - 3; i += 3)
+                    for (int x = 0; x < ImageWidth; x++)
                     {
-                        g.DrawBezier(Pens.Red, curvePoints[i], curvePoints[i + 1], curvePoints[i + 2], curvePoints[i + 3]);
+                        if (edges[y, x] > 50)
+                        {
+                            bmp.SetPixel(x, y, Color.Silver);
+                        }
                     }
                 }
-                else if (curvePoints.Count == 2)
+
+                // Draw curve using DrawCurve
+                if (curvePoints.Count >= 2)
                 {
-                    g.DrawLine(Pens.Red, curvePoints[0], curvePoints[1]);
+                    g.DrawCurve(Pens.Red, curvePoints.ToArray()); // Tension 0.5 for smoother curve
+                } else
+                {
+
                 }
+
+                // Highlight control points with green and orange circles
+                foreach (var point in curvePoints)
+                {
+                    g.FillEllipse(Brushes.Orange, point.X - 5, point.Y - 5, 10, 10);
+                }
+
+          
             }
 
             return bmp;
         }
-
-        
     }
 }

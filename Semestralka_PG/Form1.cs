@@ -110,7 +110,6 @@ namespace Semestralka_PG
             return result;
         }
 
-        // Generovanie Gaussovho jadra
         private double[] GenerateGaussianKernel(int size, double sigma)
         {
             double[] kernel = new double[size];
@@ -258,9 +257,8 @@ namespace Semestralka_PG
        
         private List<PointF> FitBezierCurve(List<PointF> points)
         {
-            int n = points.Count;
 
-            if (n < 4)
+            if (points.Count < 4)
             {
                 throw new ArgumentException("At least 4 points are required to fit a cubic Bezier curve.");
             }
@@ -310,15 +308,13 @@ namespace Semestralka_PG
                 double ttt = tt * t[i];
                 double uuu = uu * u;
 
-                // Note: we are solving for P1 and P2, so we use the fixed P0 and P3
-                A[i, 0] = 3 * uu * t[i]; // Coefficient for P1
-                A[i, 1] = 3 * u * tt;    // Coefficient for P2
+                A[i, 0] = 3 * uu * t[i]; 
+                A[i, 1] = 3 * u * tt;   
 
                 Bx[i] = points[i][0] - (uuu * P0[0] + ttt * P3[0]);
                 By[i] = points[i][1] - (uuu * P0[1] + ttt * P3[1]);
             }
 
-            // Solve the least squares problem
             var P1P2X = A.Solve(Bx);
             var P1P2Y = A.Solve(By);
 

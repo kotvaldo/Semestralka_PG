@@ -89,7 +89,6 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="BezierCurve.cs" />
-    <Compile Include="CoordinationTransformation.cs" />
     <Compile Include="DeCasteljau.cs" />
     <Compile Include="Form1.cs">
       <SubType>Form</SubType>

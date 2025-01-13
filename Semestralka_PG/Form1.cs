@@ -32,28 +32,29 @@ namespace Semestralka_PG
             };
 
             if (openFileDialog.ShowDialog() == DialogResult.OK)
-            {   
+            {
                 _profiler.ClearData();
                 _profiler.StartNewSequence();
-
                 byte[,] luminance = LoadYChannel(openFileDialog.FileName);
 
-                double[,] blurred = ApplyGaussianFilterDCTVParallel(luminance);
+                byte[,] blurred = ApplyGaussianFilter(luminance);
+            
+                byte[,] edges = SobelEdgeDetectionParallel(blurred);
+                edges = ApplyThresholdParallel(edges, 9);
 
                 byte[,] binaryImage = ApplyThresholdParallel(luminance, OtsuThreshold(luminance));
 
-                byte[,] edges = SobelEdgeDetectionParallel(luminance);
-
                 List<PointF> centerLine = FindCenterLine(binaryImage);
 
-                var bezierPoints = ComputeBezierCurve(centerLine,0.2);
+                var bezierPoints = ComputeBezierCurve(centerLine, 0.2);
 
 
-                pictureBox1.Image = RenderImageFast(blurred,binaryImage, bezierPoints, edges);
+                pictureBox1.Image = RenderImageFast(binaryImage, bezierPoints, edges);
 
                 _profiler.StopNewSequence();
-                _profiler.ClearData();
                 MessageBox.Show($"Processing completed in {_profiler.Data.First()} ms", "Processing Time");
+
+                _profiler.ClearData();
             }
         }
 
@@ -64,12 +65,12 @@ namespace Semestralka_PG
                 Filter = "Text Files (*.txt)|*.txt",
                 Title = "Select Text Image File"
             };
-            
+
             if (openFileDialog.ShowDialog() == DialogResult.OK)
             {
                 _profiler.ClearData();
                 int count = 0;
-                if (textBox1.Text == "" )
+                if (textBox1.Text == "")
                 {
                     count = 20;
                 }
@@ -78,11 +79,13 @@ namespace Semestralka_PG
                     try
                     {
                         count = int.Parse(textBox1.Text);
-                    }catch {
+                    }
+                    catch
+                    {
                         MessageBox.Show("Not correct number. Set Default to 20", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
                         count = 20;
                     }
-                    
+
                 }
                 for (int i = 0; i <= count; i++)
                 {
@@ -90,18 +93,19 @@ namespace Semestralka_PG
 
                     byte[,] luminance = LoadYChannel(openFileDialog.FileName);
 
-                    double[,] blurred = ApplyGaussianFilterDCTVParallel(luminance);
+                    byte[,] blurred = ApplyGaussianFilter(luminance);
 
                     byte[,] edges = SobelEdgeDetectionParallel(luminance);
+                   
 
-                    byte[,] binaryImage = ApplyThresholdParallel(luminance, OtsuThreshold(luminance));
+                    byte[,] binaryImage = ApplyThresholdParallel(blurred, OtsuThreshold(blurred));
 
                     List<PointF> centerLine = FindCenterLine(binaryImage);
 
                     var bezierPoints = ComputeBezierCurve(centerLine, 0.2);
 
 
-                    pictureBox1.Image = RenderImageFast(blurred, binaryImage, bezierPoints,edges);
+                    pictureBox1.Image = RenderImageFast(binaryImage, bezierPoints, edges);
 
                     _profiler.StopNewSequence();
 
@@ -126,132 +130,116 @@ namespace Semestralka_PG
             return luminance;
         }
 
-        private double[,] ApplyGaussianFilterDCTVParallel(byte[,] image)
+       
+        public byte[,] ApplyGaussianFilter(byte[,] image)
         {
-            int R = 3;
-            double sigma = 1.0;
+            double[] kernel = GenerateGaussianKernel(3);
+            double kernelSum = kernel.Sum(); // Sum of kernel values for normalization
+            int offset = kernel.Length / 2; // Half-size of the kernel
 
-            int kernelSize = 2 * R + 1;
-            double[] g = GenerateGaussianKernel(kernelSize, sigma);
+            // Temporary arrays for intermediate results
+            byte[,] temp = new byte[ImageHeight, ImageWidth];
+            byte[,] result = new byte[ImageHeight, ImageWidth];
 
-            double[,] result = new double[ImageHeight, ImageWidth];
-
+            // Horizontal pass: Apply the kernel along rows
             Parallel.For(0, ImageHeight, y =>
             {
-                double[] row = new double[ImageWidth];
-                for (int x = 0; x < ImageWidth; x++)
+                for (int x = offset; x < ImageWidth - offset; x++)
                 {
-                    row[x] = image[y, x];
-                }
-                double[] filteredRow = ApplyDCTV(row, g);
-
-                for (int x = 0; x < ImageWidth; x++)
-                {
-                    result[y, x] = filteredRow[x];
+                    double sum = 0;
+                    for (int k = -offset; k <= offset; k++)
+                    {
+                        sum += kernel[k + offset] * image[y, x + k];
+                    }
+                    temp[y, x] = (byte)(sum / kernelSum); // Normalize
                 }
             });
 
+            // Vertical pass: Apply the kernel along columns
             Parallel.For(0, ImageWidth, x =>
             {
-                double[] column = new double[ImageHeight];
-                for (int y = 0; y < ImageHeight; y++)
+                for (int y = offset; y < ImageHeight - offset; y++)
                 {
-                    column[y] = result[y, x];
-                }
-                double[] filteredColumn = ApplyDCTV(column, g);
-
-                for (int y = 0; y < ImageHeight; y++)
-                {
-                    result[y, x] = filteredColumn[y];
+                    double sum = 0;
+                    for (int k = -offset; k <= offset; k++)
+                    {
+                        sum += kernel[k + offset] * temp[y + k, x];
+                    }
+                    result[y, x] = (byte)(sum / kernelSum); // Normalize
                 }
             });
 
             return result;
         }
 
-        private double[] GenerateGaussianKernel(int size, double sigma)
-        {
-            double[] kernel = new double[size];
-            int center = size / 2;
-            double sigma2 = sigma * sigma;
-            double normalization = 1.0 / (Math.Sqrt(2 * Math.PI) * sigma);
 
+        public double[] GenerateGaussianKernel(double sigma)
+        {
+            // Dynamicky vypočítať veľkosť jadra
+            int size = (int)Math.Ceiling(6 * sigma) | 1; // Zaokrúhli na nepárne číslo
+            double[] kernel = new double[size];
+            int offset = size / 2; // Stred jadra
+            double sum = 0;
+
+            // Vypočítať hodnoty Gaussovej funkcie pre jadro
             for (int i = 0; i < size; i++)
             {
-                int x = i - center;
-                kernel[i] = normalization * Math.Exp(-x * x / (2 * sigma2));
+                double x = i - offset;
+                kernel[i] = Math.Exp(-(x * x) / (2 * sigma * sigma)) / (Math.Sqrt(2 * Math.PI) * sigma);
+                sum += kernel[i];
+            }
+
+            // Normalizovať jadro
+            for (int i = 0; i < size; i++)
+            {
+                kernel[i] /= sum;
             }
 
             return kernel;
         }
 
-       
-        
-        private double[] ApplyDCTV(double[] data, double[] kernel)
-        {
-            int N = data.Length;
-            int K = kernel.Length;
-            double[] result = new double[N];
-            double[] dctKernel = new double[K];
-
-           
-            for (int k = 0; k < K; k++)
-            {
-                double sum = 0.0;
-                for (int n = 0; n < K; n++)
-                {
-                    sum += kernel[n] * Math.Cos(Math.PI * k * (2 * n + 1) / (2 * K));
-                }
-                dctKernel[k] = sum;
-            }
-
-            for (int i = 0; i < N; i++)
-            {
-                double sum = 0.0;
-                for (int k = 0; k < K; k++)
-                {
-                    if (i - k >= 0 && i - k < N)
-                    {
-                        sum += data[i - k] * dctKernel[k];
-                    }
-                }
-                result[i] = sum;
-            }
-
-            return result;
-        }
 
         private int[] GenerateHistogram(byte[,] image)
         {
             int[] histogram = new int[256];
+            int[][] threadHistograms = new int[Environment.ProcessorCount][];
+
+            Parallel.For(0, threadHistograms.Length, i => threadHistograms[i] = new int[256]);
 
             Parallel.For(0, ImageHeight, y =>
             {
+                int[] localHistogram = threadHistograms[Task.CurrentId.Value % threadHistograms.Length];
                 for (int x = 0; x < ImageWidth; x++)
                 {
-                    lock (histogram)
-                    {
-                        histogram[image[y, x]]++;
-                    }
+                    localHistogram[image[y, x]]++;
                 }
             });
+
+            for (int i = 0; i < threadHistograms.Length; i++)
+            {
+                for (int j = 0; j < 256; j++)
+                {
+                    histogram[j] += threadHistograms[i][j];
+                }
+            }
 
             return histogram;
         }
 
+
         private byte[,] SobelEdgeDetectionParallel(byte[,] image)
         {
             int[,] gx = {
-                { -1, 0, 1 },
-                { -2, 0, 2 },
-                { -1, 0, 1 }
-            };
+        { -1, 0, 1 },
+        { -2, 0, 2 },
+        { -1, 0, 1 }
+    };
 
             int[,] gy = {
-                { 1, 2, 1 },
-                { 0, 0, 0 },
-                { -1, -2, -1 }
-            };
+        { 1, 2, 1 },
+        { 0, 0, 0 },
+        { -1, -2, -1 }
+    };
 
             byte[,] edges = new byte[ImageHeight, ImageWidth];
 
@@ -271,12 +259,14 @@ namespace Semestralka_PG
                     }
 
                     int magnitude = (int)Math.Sqrt(sumX * sumX + sumY * sumY);
-                    edges[y, x] = (byte)Math.Min(255, magnitude);
+
+                    edges[y, x] = (byte)(magnitude >= 0 ? Math.Min(255, magnitude) : 0);
                 }
             });
 
             return edges;
         }
+
         private int OtsuThreshold(byte[,] image)
         {
             int[] histogram = GenerateHistogram(image);
@@ -324,7 +314,7 @@ namespace Semestralka_PG
             return binaryImage;
         }
 
-        
+
 
         private List<PointF> FindCenterLine(byte[,] binaryImage)
         {
@@ -385,7 +375,7 @@ namespace Semestralka_PG
         }
 
 
-        private Bitmap RenderImageFast(double[,] blurred, byte[,] binaryImage, List<PointF> curvePoints, byte[,] edges)
+        private Bitmap RenderImageFast(byte[,] binaryImage, List<PointF> curvePoints, byte[,] edges)
         {
             Bitmap bmp = new Bitmap(ImageWidth, ImageHeight);
 
@@ -397,24 +387,44 @@ namespace Semestralka_PG
             int bytes = stride * ImageHeight;
             byte[] rgbValues = new byte[bytes];
 
-            // Render blurred image as background
+            // 1. Initialize the entire image to white
             Parallel.For(0, ImageHeight, y =>
             {
                 for (int x = 0; x < ImageWidth; x++)
                 {
                     int index = y * stride + x * 3;
-                    int value = (int)blurred[y, x];
-                    value = Math.Max(0, Math.Min(255, value));
-                    rgbValues[index] = (byte)value; // B
-                    rgbValues[index + 1] = (byte)value; // G
-                    rgbValues[index + 2] = (byte)value; // R
+                    rgbValues[index] = 0;     // B (White)
+                    rgbValues[index + 1] = 0; // G (White)
+                    rgbValues[index + 2] = 0; // R (White)
+                }
+            });
 
-                    // Add edge highlighting
-                    if (edges[y, x] > 50) // Adjust threshold as needed
+            // 2. Render edges in silver
+            Parallel.For(0, ImageHeight, y =>
+            {
+                for (int x = 0; x < ImageWidth; x++)
+                {
+                    if (edges[y, x] > 50) // Threshold to include only significant edges
                     {
-                        rgbValues[index] = 255; // B
-                        rgbValues[index + 1] = 255; // G
-                        rgbValues[index + 2] = 255; // R
+                        int index = y * stride + x * 3;
+                        rgbValues[index] = 192;     // B (Silver)
+                        rgbValues[index + 1] = 192; // G (Silver)
+                        rgbValues[index + 2] = 192; // R (Silver)
+                    }
+                }
+            });
+
+            // 3. Render the binary image (black center)
+            Parallel.For(0, ImageHeight, y =>
+            {
+                for (int x = 0; x < ImageWidth; x++)
+                {
+                    if (binaryImage[y, x] > 0) // Binary image (white areas of object)
+                    {
+                        int index = y * stride + x * 3;
+                        rgbValues[index] = 255;     // B (Black)
+                        rgbValues[index + 1] = 255; // G (Black)
+                        rgbValues[index + 2] = 255; // R (Black)
                     }
                 }
             });
@@ -422,39 +432,27 @@ namespace Semestralka_PG
             System.Runtime.InteropServices.Marshal.Copy(rgbValues, 0, ptr, bytes);
             bmp.UnlockBits(bmpData);
 
+            // 4. Draw Bézier curve and control points
             using (Graphics g = Graphics.FromImage(bmp))
             {
-                // Draw edges in silver
-                for (int y = 0; y < ImageHeight; y++)
-                {
-                    for (int x = 0; x < ImageWidth; x++)
-                    {
-                        if (edges[y, x] > 50)
-                        {
-                            bmp.SetPixel(x, y, Color.Silver);
-                        }
-                    }
-                }
-
-                // Draw curve using DrawCurve
+                // Draw Bézier curve in red
                 if (curvePoints.Count >= 2)
                 {
-                    g.DrawCurve(Pens.Red, curvePoints.ToArray()); // Tension 0.5 for smoother curve
-                } else
-                {
-
+                    g.DrawCurve(Pens.Red, curvePoints.ToArray(), 0.5f); // Smoother curve with tension
                 }
 
-                // Highlight control points with green and orange circles
+                // Draw control points as orange circles
                 foreach (var point in curvePoints)
                 {
                     g.FillEllipse(Brushes.Orange, point.X - 5, point.Y - 5, 10, 10);
                 }
-
-          
             }
 
             return bmp;
         }
+
+
+
+
     }
 }

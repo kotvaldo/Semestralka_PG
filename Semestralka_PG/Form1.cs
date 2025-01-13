@@ -1,13 +1,11 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Imaging;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using System.Windows.Forms;
-using MathNet.Numerics.LinearAlgebra;
 
 namespace Semestralka_PG
 {
@@ -23,7 +21,7 @@ namespace Semestralka_PG
         }
 
 
-        private void BtnLoadImageClick(object sender, EventArgs e)
+        private void  BtnLoadImageClick(object sender, EventArgs e)
         {
             OpenFileDialog openFileDialog = new OpenFileDialog
             {
@@ -39,26 +37,30 @@ namespace Semestralka_PG
 
                 byte[,] blurred = ApplyGaussianFilter(luminance);
             
+               
+                byte[,] binaryImage = ApplyThresholdParallel(luminance, OtsuThreshold(luminance));
+
                 byte[,] edges = SobelEdgeDetectionParallel(blurred);
                 edges = ApplyThresholdParallel(edges, 9);
 
-                byte[,] binaryImage = ApplyThresholdParallel(luminance, OtsuThreshold(luminance));
 
-                List<PointF> centerLine = FindCenterLine(binaryImage);
-
-                var bezierPoints = ComputeBezierCurve(centerLine, 0.2);
+                List<PointF> centerLine = FindCenterLine(binaryImage, 0.1);
 
 
-                pictureBox1.Image = RenderImageFast(binaryImage, bezierPoints, edges);
+                BezierCurve bezierCurve = new BezierCurve();
+                bezierCurve.SetControlPoints(centerLine);
+
+                pictureBox1.Image = RenderImageFast(binaryImage, edges, bezierCurve);
 
                 _profiler.StopNewSequence();
                 MessageBox.Show($"Processing completed in {_profiler.Data.First()} ms", "Processing Time");
 
                 _profiler.ClearData();
+
             }
         }
 
-        private void BtnLoadImageWithCyclic(object sender, EventArgs e)
+        /*private void BtnLoadImageWithCyclic(object sender, EventArgs e)
         {
             OpenFileDialog openFileDialog = new OpenFileDialog
             {
@@ -87,33 +89,99 @@ namespace Semestralka_PG
                     }
 
                 }
+
                 for (int i = 0; i <= count; i++)
                 {
-                    _profiler.StartNewSequence();
-
+                   _profiler.StartNewSequence();
                     byte[,] luminance = LoadYChannel(openFileDialog.FileName);
 
                     byte[,] blurred = ApplyGaussianFilter(luminance);
 
-                    byte[,] edges = SobelEdgeDetectionParallel(luminance);
-                   
+                    byte[,] edges = SobelEdgeDetectionParallel(blurred);
+                    edges = ApplyThresholdParallel(edges, 9);
 
-                    byte[,] binaryImage = ApplyThresholdParallel(blurred, OtsuThreshold(blurred));
+                    byte[,] binaryImage = ApplyThresholdParallel(luminance, OtsuThreshold(luminance));
 
-                    List<PointF> centerLine = FindCenterLine(binaryImage);
-
-                    var bezierPoints = ComputeBezierCurve(centerLine, 0.2);
+                    List<PointF> centerLine = FindCenterLine(binaryImage, 0.2);
 
 
-                    pictureBox1.Image = RenderImageFast(binaryImage, bezierPoints, edges);
+                    BezierCurve bezierCurve = new BezierCurve();
+                    bezierCurve.SetControlPoints(centerLine);
 
+                    pictureBox1.Image = RenderImageFast(binaryImage, edges, bezierCurve);
                     _profiler.StopNewSequence();
 
                 }
                 _profiler.CreateFileWithChart();
                 _profiler.ClearData();
             }
+        }*/
+
+        private async Task ProcessImageAsync(string filePath)
+        {
+            // Načítanie luminancie
+            byte[,] luminance = await Task.Run(() => LoadYChannel(filePath));
+
+            // Aplikácia Gaussovho filtra
+            byte[,] blurred = await Task.Run(() => ApplyGaussianFilter(luminance));
+
+            // Detekcia hrán (Sobel) a prahovanie hrán
+            byte[,] edges = await Task.Run(() => SobelEdgeDetectionParallel(blurred));
+            edges = await Task.Run(() => ApplyThresholdParallel(edges, 10));
+
+            // Prahovanie na binárny obraz
+            byte[,] binaryImage = await Task.Run(() => ApplyThresholdParallel(luminance, OtsuThreshold(luminance)));
+
+            // Výpočet stredovej línie
+            List<PointF> centerLine = await Task.Run(() => FindCenterLine(binaryImage, 0.2));
+
+            // Vytvorenie Bézierovej krivky
+            BezierCurve bezierCurve = await Task.Run(() =>
+            {
+                BezierCurve curve = new BezierCurve();
+                curve.SetControlPoints(centerLine);
+                return curve;
+            });
+
+            // Aktualizácia obrázka v UI (musí prebiehať na hlavnom vlákne)
+            await Task.Run(() =>
+            {
+                pictureBox1.Invoke(new Action(() =>
+                {
+                    pictureBox1.Image = RenderImageFast(binaryImage, edges, bezierCurve);
+                }));
+            });
         }
+
+        private async void BtnLoadImageWithCyclic(object sender, EventArgs e)
+        {
+            OpenFileDialog openFileDialog = new OpenFileDialog
+            {
+                Filter = "Text Files (*.txt)|*.txt",
+                Title = "Select Text Image File"
+            };
+
+            if (openFileDialog.ShowDialog() == DialogResult.OK)
+            {
+                _profiler.ClearData();
+                int count = string.IsNullOrEmpty(textBox1.Text) ? 20 : int.TryParse(textBox1.Text, out var n) ? n : 20;
+
+                for (int i = 0; i <= count; i++)
+                {
+                    _profiler.StartNewSequence();
+                    await ProcessImageAsync(openFileDialog.FileName); // Volanie postupného spracovania
+                    _profiler.StopNewSequence();
+                    GC.Collect(); // Nútené čistenie pamäte
+                    GC.WaitForPendingFinalizers();
+                }
+
+                _profiler.CreateFileWithChart();
+                _profiler.ClearData();
+
+            }
+        }
+
+
         private byte[,] LoadYChannel(string filePath)
         {
             byte[] fileBytes = File.ReadAllBytes(filePath);
@@ -175,13 +243,11 @@ namespace Semestralka_PG
 
         public double[] GenerateGaussianKernel(double sigma)
         {
-            // Dynamicky vypočítať veľkosť jadra
-            int size = (int)Math.Ceiling(6 * sigma) | 1; // Zaokrúhli na nepárne číslo
+            int size = (int)Math.Ceiling(6 * sigma) | 1; 
             double[] kernel = new double[size];
-            int offset = size / 2; // Stred jadra
+            int offset = size / 2; 
             double sum = 0;
 
-            // Vypočítať hodnoty Gaussovej funkcie pre jadro
             for (int i = 0; i < size; i++)
             {
                 double x = i - offset;
@@ -189,7 +255,6 @@ namespace Semestralka_PG
                 sum += kernel[i];
             }
 
-            // Normalizovať jadro
             for (int i = 0; i < size; i++)
             {
                 kernel[i] /= sum;
@@ -202,29 +267,18 @@ namespace Semestralka_PG
         private int[] GenerateHistogram(byte[,] image)
         {
             int[] histogram = new int[256];
-            int[][] threadHistograms = new int[Environment.ProcessorCount][];
 
-            Parallel.For(0, threadHistograms.Length, i => threadHistograms[i] = new int[256]);
-
-            Parallel.For(0, ImageHeight, y =>
+            for (int y = 0; y < ImageHeight; y++)
             {
-                int[] localHistogram = threadHistograms[Task.CurrentId.Value % threadHistograms.Length];
                 for (int x = 0; x < ImageWidth; x++)
                 {
-                    localHistogram[image[y, x]]++;
-                }
-            });
-
-            for (int i = 0; i < threadHistograms.Length; i++)
-            {
-                for (int j = 0; j < 256; j++)
-                {
-                    histogram[j] += threadHistograms[i][j];
+                    histogram[image[y, x]]++;
                 }
             }
 
             return histogram;
         }
+
 
 
         private byte[,] SobelEdgeDetectionParallel(byte[,] image)
@@ -316,16 +370,21 @@ namespace Semestralka_PG
 
 
 
-        private List<PointF> FindCenterLine(byte[,] binaryImage)
+        public List<PointF> FindCenterLine(byte[,] binaryImage, double timeStep = 0.2)
         {
+            if (timeStep <= 0 || timeStep > 1.0)
+                throw new ArgumentException("Time step must be greater than 0 and less than or equal to 1.");
+
             var centerLine = new List<PointF>();
 
-            for (int y = 0; y < ImageHeight; y++)
+            // Iterate through rows with the given time step
+            for (int y = 0; y < ImageHeight; y += (int)(ImageHeight * timeStep))
             {
                 int sumX = 0, count = 0;
+
                 for (int x = 0; x < ImageWidth; x++)
                 {
-                    if (binaryImage[y, x] == 0)
+                    if (binaryImage[y, x] == 0) // Black pixel
                     {
                         sumX += x;
                         count++;
@@ -334,7 +393,7 @@ namespace Semestralka_PG
 
                 if (count > 0)
                 {
-                    centerLine.Add(new PointF(sumX / (float)count, y));
+                    centerLine.Add(new PointF(sumX / (float)count, y)); // Average x-coordinate
                 }
             }
 
@@ -342,40 +401,9 @@ namespace Semestralka_PG
         }
 
 
-        private List<PointF> ComputeBezierCurve(List<PointF> controlPoints, double inTimeInterval)
-        {
-            if (inTimeInterval <= 0.0 || inTimeInterval > 1.0)
-                throw new ArgumentException("Time interval must be in the range (0.0, 1.0].");
-
-            if (controlPoints == null || controlPoints.Count < 2)
-                throw new ArgumentException("At least two control points are required.");
-
-            List<PointF> curvePoints = new List<PointF>();
-            for (double t = 0.0; t <= 1.0; t += inTimeInterval)
-            {
-                curvePoints.Add(ComputeBezierPoint(controlPoints, (float)t));
-            }
-            return curvePoints;
-        }
-
-        private PointF ComputeBezierPoint(List<PointF> controlPoints, float t)
-        {
-            if (controlPoints.Count == 1)
-                return controlPoints[0];
-
-            List<PointF> nextLevelPoints = new List<PointF>();
-            for (int i = 0; i < controlPoints.Count - 1; i++)
-            {
-                float x = (1 - t) * controlPoints[i].X + t * controlPoints[i + 1].X;
-                float y = (1 - t) * controlPoints[i].Y + t * controlPoints[i + 1].Y;
-                nextLevelPoints.Add(new PointF(x, y));
-            }
-
-            return ComputeBezierPoint(nextLevelPoints, t);
-        }
 
 
-        private Bitmap RenderImageFast(byte[,] binaryImage, List<PointF> curvePoints, byte[,] edges)
+        private Bitmap RenderImageFast(byte[,] binaryImage, byte[,] edges, BezierCurve bezierCurve)
         {
             Bitmap bmp = new Bitmap(ImageWidth, ImageHeight);
 
@@ -400,19 +428,7 @@ namespace Semestralka_PG
             });
 
             // 2. Render edges in silver
-            Parallel.For(0, ImageHeight, y =>
-            {
-                for (int x = 0; x < ImageWidth; x++)
-                {
-                    if (edges[y, x] > 50) // Threshold to include only significant edges
-                    {
-                        int index = y * stride + x * 3;
-                        rgbValues[index] = 192;     // B (Silver)
-                        rgbValues[index + 1] = 192; // G (Silver)
-                        rgbValues[index + 2] = 192; // R (Silver)
-                    }
-                }
-            });
+           
 
             // 3. Render the binary image (black center)
             Parallel.For(0, ImageHeight, y =>
@@ -429,23 +445,27 @@ namespace Semestralka_PG
                 }
             });
 
+
+            Parallel.For(0, ImageHeight, y =>
+            {
+                for (int x = 0; x < ImageWidth; x++)
+                {
+                    if (edges[y, x] > 0) // Threshold to include only significant edges
+                    {
+                        int index = y * stride + x * 3;
+                        rgbValues[index] = 192;     // B (Silver)
+                        rgbValues[index + 1] = 192; // G (Silver)
+                        rgbValues[index + 2] = 192; // R (Silver)
+                    }
+                }
+            });
             System.Runtime.InteropServices.Marshal.Copy(rgbValues, 0, ptr, bytes);
             bmp.UnlockBits(bmpData);
 
             // 4. Draw Bézier curve and control points
             using (Graphics g = Graphics.FromImage(bmp))
             {
-                // Draw Bézier curve in red
-                if (curvePoints.Count >= 2)
-                {
-                    g.DrawCurve(Pens.Red, curvePoints.ToArray(), 0.5f); // Smoother curve with tension
-                }
-
-                // Draw control points as orange circles
-                foreach (var point in curvePoints)
-                {
-                    g.FillEllipse(Brushes.Orange, point.X - 5, point.Y - 5, 10, 10);
-                }
+                bezierCurve.Draw(g);
             }
 
             return bmp;

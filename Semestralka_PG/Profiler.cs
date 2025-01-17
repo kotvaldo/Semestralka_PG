@@ -19,6 +19,8 @@ namespace Semestralka_PG
     {
         public List<int> Data { get; set; } = new List<int>();
         Stopwatch Stopwatch { get; set; } = new Stopwatch();
+
+        public List<String> Names  {get; set;} 
         public Profiler()
         {
             ExcelPackage.LicenseContext = OfficeOpenXml.LicenseContext.NonCommercial;
@@ -40,15 +42,15 @@ namespace Semestralka_PG
             Data.Add((int)Stopwatch.ElapsedMilliseconds);
             
         }
-        public void CreateFileWithChart()
+        public void CreateFileWithChartGroupedByAlgorithm()
         {
             if (Data.Count == 0)
             {
                 throw new InvalidOperationException("Nie sú žiadne dáta na uloženie.");
             }
-            int avg = (int)Data.Average(i => (double)i);
 
-            MessageBox.Show($"Average time of algorithm for {Data.Count} images : {avg} ms ");
+            int algorithmsCount = 7; // Počet algoritmov
+
             string projectDirectory = AppDomain.CurrentDomain.BaseDirectory;
             string dataFolder = Path.Combine(projectDirectory, "Data");
 
@@ -63,28 +65,61 @@ namespace Semestralka_PG
             {
                 var worksheet = package.Workbook.Worksheets.Add("Data");
 
-                worksheet.Cells[1, 1].Value = "Index";
-                worksheet.Cells[1, 2].Value = "Hodnota";
+
+               
+                for (int i = 0; i < algorithmsCount; i++)
+                {
+                    worksheet.Cells[i + 2, 1].Value = Names;
+                }
+                worksheet.Cells[algorithmsCount + 2, 1].Value = "Total";
+
                 for (int i = 0; i < Data.Count; i++)
                 {
-                    worksheet.Cells[i + 2, 1].Value = i + 1;
-                    worksheet.Cells[i + 2, 2].Value = Data[i];
+                    int row = (i % algorithmsCount) + 2; 
+                    int column = (i / algorithmsCount) + 2;
+
+                    worksheet.Cells[row, column].Value = Data[i];
                 }
 
+                for (int i = 0; i < algorithmsCount; i++)
+                {
+                    int row = i + 2;
+                    worksheet.Cells[row, Data.Count / algorithmsCount + 2].Formula = $"AVERAGE({worksheet.Cells[row, 2].Address}:{worksheet.Cells[row, Data.Count / algorithmsCount + 1].Address})";
+                }
+                for (int col = 2; col <= Data.Count / algorithmsCount + 1; col++)
+                {
+                    worksheet.Cells[1, col].Value = $"{col - 2}.";
+                }
 
-                var chart = worksheet.Drawings.AddChart("DataChart", eChartType.Line);
-                chart.Title.Text = "Chart of Values";
-                chart.SetPosition(0, 0, 3, 0);
-                chart.SetSize(800, 400);
+                for (int col = 2; col <= Data.Count / algorithmsCount + 1; col++)
+                {
+                    worksheet.Cells[algorithmsCount + 2, col].Formula = $"SUM({worksheet.Cells[2, col].Address}:{worksheet.Cells[algorithmsCount + 1, col].Address})";
+                }
 
-                var series = chart.Series.Add(worksheet.Cells[2, 2, Data.Count + 1, 2], worksheet.Cells[2, 1, Data.Count + 1, 1]);
-                series.Header = "Values";
+          
+                var totalChart = worksheet.Drawings.AddChart("TotalChart", eChartType.ColumnClustered);
+                totalChart.Title.Text = "Total Times per Algorithm";
+                totalChart.SetPosition(15, 0, 15, 15);
+                totalChart.SetSize(800, 400);
+
+                var totalSeries = totalChart.Series.Add(worksheet.Cells[2, Data.Count / algorithmsCount + 2, algorithmsCount + 1, Data.Count / algorithmsCount + 2], worksheet.Cells[2, 1, algorithmsCount + 1, 1]);
+                totalSeries.Header = "AVG time";
+
+                var columnSumChart = worksheet.Drawings.AddChart("ColumnSumChart", eChartType.Line);
+                columnSumChart.Title.Text = "Total time of sequence";
+                columnSumChart.SetPosition(15, 0, 0, 3);
+                columnSumChart.SetSize(800, 400);
+
+                var columnSumSeries = columnSumChart.Series.Add(worksheet.Cells[algorithmsCount + 2, 2, algorithmsCount + 2, Data.Count / algorithmsCount + 1], worksheet.Cells[1, 2, 1, Data.Count / algorithmsCount + 1]);
+                columnSumSeries.Header = "Total time";
 
 
                 package.SaveAs(new FileInfo(filePath));
             }
 
+            MessageBox.Show($"Data were saved to {filePath}");
         }
+
     }
 
 }

@@ -14,11 +14,35 @@ namespace Semestralka_PG
         private const int ImageWidth = 512;
         private const int ImageHeight = 512;
         private Profiler _profiler = new Profiler();
-
+        private List<Label> labels = new List<Label>();
+        private List<String> _names = new List<String>();
         public Form1()
         {
             InitializeComponent();
+            labels.Add(label1);
+            labels.Add(label2);
+            labels.Add(label3);
+            labels.Add(label4);
+            labels.Add(label5);
+            labels.Add(label6);
+            labels.Add(label7);
+            labels.Add(label8);
+
+            _names.Add("Luminance");
+            _names.Add("Gauss");
+            _names.Add("Otsu threshold");
+            _names.Add("Sobel Edge");
+            _names.Add("Center Line");
+            _names.Add("DeCasteljau");
+            _names.Add("Bitmap drawing");
+            _profiler.Names = _names;
+            for (int i = 0; i < labels.Count - 1; i++)
+            {
+                labels[i].Text = $"Algortihm {i + 1} Time:";
+            }
+            label8.Text = "Total time> ";
         }
+
 
 
         private void  BtnLoadImageClick(object sender, EventArgs e)
@@ -32,9 +56,46 @@ namespace Semestralka_PG
             if (openFileDialog.ShowDialog() == DialogResult.OK)
             {
                 _profiler.ClearData();
-                ProcessingAlgorithms(openFileDialog);
-                MessageBox.Show($"Processing completed in {_profiler.Data.First()} ms", "Processing Time");
 
+                _profiler.StartNewSequence();
+                byte[,] yChannel = LoadYChannel(openFileDialog.FileName);
+                _profiler.StopNewSequence();
+
+                _profiler.StartNewSequence();
+                byte[,] blurredYChannel = ApplyGaussianFilter(yChannel);
+                _profiler.StopNewSequence();
+
+                _profiler.StartNewSequence();
+                byte[,] binaryImage = ApplyThresholdParallel(yChannel);
+                _profiler.StopNewSequence();
+
+                _profiler.StartNewSequence();
+                byte[,] edges = SobelEdgeDetectionParallel(blurredYChannel, 8);
+                _profiler.StopNewSequence();
+
+
+                _profiler.StartNewSequence();
+                List<PointF> centerLine = FindCenterLine(binaryImage, 0.1);
+                _profiler.StopNewSequence();
+
+                BezierCurve bezierCurve = new BezierCurve();
+
+                _profiler.StartNewSequence();
+                bezierCurve.SetControlPoints(centerLine);
+                _profiler.StopNewSequence();
+
+                _profiler.StartNewSequence();
+                pictureBox1.Image = RenderImageFast(binaryImage, edges, bezierCurve);
+                _profiler.StopNewSequence();
+                
+                for (int i = 0; i < 7; i++)
+                {
+                    labels[i].Text = $"{_names[i]} {i} Time: {_profiler.Data[i]}ms";
+                }
+                labels[7].Text = $"Total Time: {_profiler.Data.Sum()}ms";
+
+                GC.Collect();
+                GC.WaitForPendingFinalizers();
                 _profiler.ClearData();
 
             }
@@ -56,40 +117,48 @@ namespace Semestralka_PG
 
                 for (int i = 0; i <= count; i++)
                 {
-                    ProcessingAlgorithms(openFileDialog);
+                    _profiler.StartNewSequence();
+                    byte[,] yChannel = LoadYChannel(openFileDialog.FileName);
+                    _profiler.StopNewSequence();
+
+                    _profiler.StartNewSequence();
+                    byte[,] blurredYChannel = ApplyGaussianFilter(yChannel);
+                    _profiler.StopNewSequence();
+
+                    _profiler.StartNewSequence();
+                    byte[,] binaryImage = ApplyThresholdParallel(yChannel);
+                    _profiler.StopNewSequence();
+
+                    _profiler.StartNewSequence();
+                    byte[,] edges = SobelEdgeDetectionParallel(blurredYChannel, 8);
+                    _profiler.StopNewSequence();
+
+
+                    _profiler.StartNewSequence();
+                    List<PointF> centerLine = FindCenterLine(binaryImage, 0.1);
+                    _profiler.StopNewSequence();
+
+                    BezierCurve bezierCurve = new BezierCurve();
+
+                    _profiler.StartNewSequence();
+                    bezierCurve.SetControlPoints(centerLine);
+                    _profiler.StopNewSequence();
+
+                    _profiler.StartNewSequence();
+                    pictureBox1.Image = RenderImageFast(binaryImage, edges, bezierCurve);
+                    _profiler.StopNewSequence();
+
                     GC.Collect();
                     GC.WaitForPendingFinalizers();
                 }
 
-                _profiler.CreateFileWithChart();
+                _profiler.CreateFileWithChartGroupedByAlgorithm();
                 _profiler.ClearData();
 
             }
         }
 
-        private void ProcessingAlgorithms(OpenFileDialog openFileDialog)
-        {
-            _profiler.StartNewSequence();
-            byte[,] luminance = LoadYChannel(openFileDialog.FileName);
-
-            byte[,] blurred = ApplyGaussianFilter(luminance);
-
-
-            byte[,] binaryImage = ApplyThresholdParallel(luminance);
-
-            byte[,] edges = SobelEdgeDetectionParallel(blurred);
-
-
-            List<PointF> centerLine = FindCenterLine(binaryImage, 0.1);
-
-
-            BezierCurve bezierCurve = new BezierCurve();
-            bezierCurve.SetControlPoints(centerLine);
-
-            pictureBox1.Image = RenderImageFast(binaryImage, edges, bezierCurve);
-
-            _profiler.StopNewSequence();
-        }
+       
 
 
 
@@ -98,23 +167,23 @@ namespace Semestralka_PG
         private byte[,] LoadYChannel(string filePath)
         {
             byte[] fileBytes = File.ReadAllBytes(filePath);
-            byte[,] luminance = new byte[ImageHeight, ImageWidth];
+            byte[,] yChannel = new byte[ImageHeight, ImageWidth];
 
-            for (int y = 0; y < ImageHeight; y++)
+            for (int x = 0; x < ImageHeight; x++)
             {
-                for (int x = 0; x < ImageWidth; x++)
+                for (int y = 0; y < ImageWidth; y++)
                 {
-                    luminance[y, x] = fileBytes[y * ImageWidth + x];
+                    yChannel[x, y] = fileBytes[x * ImageWidth + y];
                 }
             }
 
-            return luminance;
+            return yChannel;
         }
 
        
         public byte[,] ApplyGaussianFilter(byte[,] image)
         {
-            double[] kernel = GenerateGaussianKernel(4);
+            double[] kernel = GenerateGaussianKernel(3);
             double kernelSum = kernel.Sum(); 
             int offset = kernel.Length / 2; 
 
@@ -154,7 +223,7 @@ namespace Semestralka_PG
 
         public double[] GenerateGaussianKernel(double sigma)
         {
-            int size = (int)Math.Ceiling(4 * sigma) | 1; 
+            int size = (int)Math.Ceiling(6 * sigma + 1) | 1;
             double[] kernel = new double[size];
             int offset = size / 2; 
             double sum = 0;
@@ -177,7 +246,7 @@ namespace Semestralka_PG
 
       
 
-        private byte[,] SobelEdgeDetectionParallel(byte[,] image)
+        private byte[,] SobelEdgeDetectionParallel(byte[,] image, int T)
         {
             int[,] gx = {
         { -1, 0, 1 },
@@ -208,60 +277,69 @@ namespace Semestralka_PG
                         }
                     }
 
-                    int magnitude = (int)Math.Sqrt(sumX * sumX + sumY * sumY);
+                    int gradientSize = (int)Math.Sqrt(sumX * sumX + sumY * sumY);
 
-                    edges[y, x] = (byte)(magnitude >= 8 ? Math.Min(255, magnitude) : 0);
+                    edges[y, x] = (byte)(gradientSize >= T ? Math.Min(255, gradientSize) : 0);
                 }
             });
 
             return edges;
         }
 
-        private int OtsuThreshold(byte[,] image)
-        {
-            int[] histogram = new int[256];
 
+
+        private byte[,] ApplyThresholdParallel(byte[,] image)
+        {
+            int totalPixels = ImageWidth * ImageHeight;
+
+            int threshold = 0;
+
+            // Histogram a výpočet pravdepodobností
+            int[] h = new int[256];
             for (int y = 0; y < ImageHeight; y++)
             {
                 for (int x = 0; x < ImageWidth; x++)
                 {
-                    histogram[image[y, x]]++;
+                    h[image[y, x]]++;
                 }
             }
 
-            int totalPixels = ImageWidth * ImageHeight;
-
-            int sumB = 0, wB = 0, max = 0;
-            int sum1 = histogram.Select((t, i) => t * i).Sum();
-            int threshold = 0;
-
-            for (int t = 0; t < 256; t++)
+            double[] p = new double[256];
+            for (int i = 0; i < 256; i++)
             {
-                wB += histogram[t];
-                if (wB == 0) continue;
+                p[i] = (double)h[i] / totalPixels;
+            }
 
-                int wF = totalPixels - wB;
-                if (wF == 0) break;
+            // Počiatočné premenné
+            double sum1 = 0;
+            for (int i = 0; i < 256; i++)
+            {
+                sum1 += i * p[i];
+            }
 
-                sumB += t * histogram[t];
-                int mB = sumB / wB;
-                int mF = (sum1 - sumB) / wF;
-                int between = wB * wF * (mB - mF) * (mB - mF);
+            double w1 = 0, sum2 = 0, max = 0;
+
+            for (int i = 0; i < 256; i++)
+            {
+                w1 += p[i];
+                if (w1 == 0) continue;
+
+                double w2 = 1 - w1;
+                if (w2 == 0) break;
+
+                sum2 += i * p[i];
+                double m1 = sum2 / w1;
+                double m2 = (sum1 - sum2) / w2;
+                double between = w1 * w2 * (m1 - m2) * (m1 - m2);
 
                 if (between > max)
                 {
                     max = between;
-                    threshold = t;
+                    threshold = i;
                 }
             }
 
-            return threshold;
-        }
-
-        private byte[,] ApplyThresholdParallel(byte[,] image)
-        {
-
-            int threshold = OtsuThreshold(image);
+            // Binarizácia obrazu na základe vypočítaného prahu
             byte[,] binaryImage = new byte[ImageHeight, ImageWidth];
 
             Parallel.For(0, ImageHeight, y =>

@@ -69,7 +69,7 @@ namespace Semestralka_PG
                
                 for (int i = 0; i < algorithmsCount; i++)
                 {
-                    worksheet.Cells[i + 2, 1].Value = Names;
+                    worksheet.Cells[i + 2, 1].Value = Names[i];
                 }
                 worksheet.Cells[algorithmsCount + 2, 1].Value = "Total";
 

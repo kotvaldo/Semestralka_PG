@@ -39,8 +39,8 @@ namespace Semestralka_PG
 
             for (int i = 0; i < pointCount; i++)
             {
-                float time = i == 0 ? 0 : i / (float)(pointCount - 1);
-                result.Add(GetCurvePoint(bezierControlPoints, time));
+                float t = i == 0 ? 0 : i / (float)(pointCount - 1);
+                result.Add(GetCurvePoint(bezierControlPoints, t));
             }
 
             return result;

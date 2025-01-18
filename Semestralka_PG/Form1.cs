@@ -57,37 +57,8 @@ namespace Semestralka_PG
             {
                 _profiler.ClearData();
 
-                _profiler.StartNewSequence();
-                byte[,] yChannel = LoadYChannel(openFileDialog.FileName);
-                _profiler.StopNewSequence();
+                Algorithm(openFileDialog);
 
-                _profiler.StartNewSequence();
-                byte[,] blurredYChannel = ApplyGaussianFilter(yChannel);
-                _profiler.StopNewSequence();
-
-                _profiler.StartNewSequence();
-                byte[,] binaryImage = ApplyThresholdParallel(yChannel);
-                _profiler.StopNewSequence();
-
-                _profiler.StartNewSequence();
-                byte[,] edges = SobelEdgeDetectionParallel(blurredYChannel, 8);
-                _profiler.StopNewSequence();
-
-
-                _profiler.StartNewSequence();
-                List<PointF> centerLine = FindCenterLine(binaryImage, 0.1);
-                _profiler.StopNewSequence();
-
-                BezierCurve bezierCurve = new BezierCurve();
-
-                _profiler.StartNewSequence();
-                bezierCurve.SetControlPoints(centerLine);
-                _profiler.StopNewSequence();
-
-                _profiler.StartNewSequence();
-                pictureBox1.Image = RenderImageFast(binaryImage, edges, bezierCurve);
-                _profiler.StopNewSequence();
-                
                 for (int i = 0; i < 7; i++)
                 {
                     labels[i].Text = $"{_names[i]} {i} Time: {_profiler.Data[i]}ms";
@@ -117,36 +88,7 @@ namespace Semestralka_PG
 
                 for (int i = 0; i <= count; i++)
                 {
-                    _profiler.StartNewSequence();
-                    byte[,] yChannel = LoadYChannel(openFileDialog.FileName);
-                    _profiler.StopNewSequence();
-
-                    _profiler.StartNewSequence();
-                    byte[,] blurredYChannel = ApplyGaussianFilter(yChannel);
-                    _profiler.StopNewSequence();
-
-                    _profiler.StartNewSequence();
-                    byte[,] binaryImage = ApplyThresholdParallel(yChannel);
-                    _profiler.StopNewSequence();
-
-                    _profiler.StartNewSequence();
-                    byte[,] edges = SobelEdgeDetectionParallel(blurredYChannel, 8);
-                    _profiler.StopNewSequence();
-
-
-                    _profiler.StartNewSequence();
-                    List<PointF> centerLine = FindCenterLine(binaryImage, 0.1);
-                    _profiler.StopNewSequence();
-
-                    BezierCurve bezierCurve = new BezierCurve();
-
-                    _profiler.StartNewSequence();
-                    bezierCurve.SetControlPoints(centerLine);
-                    _profiler.StopNewSequence();
-
-                    _profiler.StartNewSequence();
-                    pictureBox1.Image = RenderImageFast(binaryImage, edges, bezierCurve);
-                    _profiler.StopNewSequence();
+                    Algorithm(openFileDialog);
 
                     GC.Collect();
                     GC.WaitForPendingFinalizers();
@@ -158,7 +100,40 @@ namespace Semestralka_PG
             }
         }
 
-       
+        private void Algorithm(OpenFileDialog openFileDialog)
+        {
+            _profiler.StartNewSequence();
+            byte[,] yChannel = LoadYChannel(openFileDialog.FileName); // luminance
+            _profiler.StopNewSequence();
+
+            _profiler.StartNewSequence();
+            byte[,] blurredYChannel = ApplyGaussianFilter(yChannel); // gauss
+            _profiler.StopNewSequence();
+
+            _profiler.StartNewSequence();
+            byte[,] binaryImage = ApplyThresholdParallel(yChannel); // threshold 
+            _profiler.StopNewSequence();
+
+            _profiler.StartNewSequence();
+            byte[,] edges = SobelEdgeDetectionParallel(blurredYChannel, 8); // sobel edge
+            _profiler.StopNewSequence();
+
+
+            _profiler.StartNewSequence();
+            List<PointF> centerLine = FindCenterLine(binaryImage, 0.1); // center line
+            _profiler.StopNewSequence();
+
+            BezierCurve bezierCurve = new BezierCurve();
+
+            _profiler.StartNewSequence();
+            bezierCurve.SetControlPoints(centerLine); // bezier decasteljau
+            _profiler.StopNewSequence();
+
+            _profiler.StartNewSequence();
+            pictureBox1.Image = RenderImageFast(binaryImage, edges, bezierCurve); // render 
+            _profiler.StopNewSequence();
+        }
+
 
 
 
